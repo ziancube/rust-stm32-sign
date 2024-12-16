@@ -17,18 +17,19 @@ use k256::elliptic_curve::sec1::ToEncodedPoint;
 use panic_probe as _;
 
 // stm32
-use embassy_stm32;
-use embassy_stm32::{bind_interrupts, peripherals, rng};
-use embassy_stm32::rng::Rng;
+use embassy_stm32::{self, time};
 use embassy_stm32::gpio::{Level, Output, Speed};
+use embassy_stm32::rng::Rng;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::Config;
+use embassy_stm32::{bind_interrupts, peripherals, rng};
 use embassy_time::Delay;
 
 use embassy_stm32::fmc::Fmc;
 
 use embedded_alloc::LlffHeap as Heap;
 use embedded_hal::delay::DelayNs;
+use rsa::traits::{PrivateKeyParts, PublicKeyParts};
 
 extern crate alloc;
 
@@ -58,14 +59,59 @@ fn main() -> ! {
     let mut sdram = Fmc::sdram_a12bits_d32bits_4banks_bank2(
         p.FMC,
         // A0-A11
-        p.PF0, p.PF1, p.PF2, p.PF3, p.PF4, p.PF5, p.PF12, p.PF13, p.PF14, p.PF15, p.PG0, p.PG1,
+        p.PF0,
+        p.PF1,
+        p.PF2,
+        p.PF3,
+        p.PF4,
+        p.PF5,
+        p.PF12,
+        p.PF13,
+        p.PF14,
+        p.PF15,
+        p.PG0,
+        p.PG1,
         // BA0-BA1
-        p.PG4, p.PG5,
+        p.PG4,
+        p.PG5,
         // D0-D31
-        p.PD14, p.PD15, p.PD0, p.PD1, p.PE7, p.PE8, p.PE9, p.PE10, p.PE11, p.PE12, p.PE13, p.PE14, p.PE15, p.PD8, p.PD9, p.PD10,
-        p.PH8, p.PH9, p.PH10, p.PH11, p.PH12, p.PH13, p.PH14, p.PH15, p.PI0, p.PI1, p.PI2, p.PI3, p.PI6, p.PI7, p.PI9, p.PI10,
+        p.PD14,
+        p.PD15,
+        p.PD0,
+        p.PD1,
+        p.PE7,
+        p.PE8,
+        p.PE9,
+        p.PE10,
+        p.PE11,
+        p.PE12,
+        p.PE13,
+        p.PE14,
+        p.PE15,
+        p.PD8,
+        p.PD9,
+        p.PD10,
+        p.PH8,
+        p.PH9,
+        p.PH10,
+        p.PH11,
+        p.PH12,
+        p.PH13,
+        p.PH14,
+        p.PH15,
+        p.PI0,
+        p.PI1,
+        p.PI2,
+        p.PI3,
+        p.PI6,
+        p.PI7,
+        p.PI9,
+        p.PI10,
         // NBL0 - NBL3
-        p.PE0, p.PE1, p.PI4, p.PI5,
+        p.PE0,
+        p.PE1,
+        p.PI4,
+        p.PI5,
         p.PH7,  // SDCKE1
         p.PG8,  // SDCLK
         p.PG15, // SDNCAS
@@ -87,7 +133,7 @@ fn main() -> ! {
 
     // we already initialized the sdram and global allocator
     // now we can use heap, alloc memory
-    // test_heap();
+    test_heap();
 
     let digest = signer::digest(b"hello world");
     let s = hex::encode(digest);
@@ -95,23 +141,48 @@ fn main() -> ! {
 
     let mut rng = Rng::new(p.RNG, Irqs);
 
-    let key = signer::keygen(&mut rng);
+    {
+        info!("secp256k1 testing ...");
+        let key = signer::keygen(&mut rng);
 
-    let s = hex::encode(key.to_bytes());
-    info!("private key: {}", s.as_str());
+        let s = hex::encode(key.to_bytes());
+        info!("private key: {}", s.as_str());
 
-    let b = key.verifying_key().to_encoded_point(false);
-    let s = hex::encode(b.as_bytes());
-    info!("public key: {}", s.as_str());
+        let b = key.verifying_key().to_encoded_point(false);
+        let s = hex::encode(b.as_bytes());
+        info!("public key: {}", s.as_str());
 
-    let sig = signer::sign(b"hello world", &key);
+        let sig = signer::sign(b"hello world", &key);
 
-    let s = hex::encode(sig);
-    info!("signature: {}", s.as_str());
+        let s = hex::encode(sig);
+        info!("signature: {}", s.as_str());
+    }
+
+    {
+        info!("rsa testing ...");
+        info!("private key: ");
+        let now = embassy_time::Instant::now();
+        let key = signer::rsa_key(& mut rng);
+        let elapsed = now.elapsed();
+        info!("key generation time: {} s", elapsed.as_secs());
+        let s = hex::encode(key.d().to_bytes_be());
+        info!("d: {}", s.as_str());
+
+        info!("public key: ");
+        let pk = key.to_public_key();
+        let s = hex::encode(pk.n().to_bytes_be());
+        info!("n: {}", s.as_str());
+
+        let now = embassy_time::Instant::now();
+        let sig = signer::rsa_sign(b"hello world", &key);
+        let elapsed = now.elapsed();
+        info!("signing time: {} s", elapsed.as_secs());
+        let s = hex::encode(sig);
+        info!("signature: {}", s.as_str());
+    }
 
     // stm32h747i-disco red led
     let mut led = Output::new(p.PI14, Level::High, Speed::Low);
-
 
     let mut delay = Delay;
     loop {
@@ -269,7 +340,7 @@ fn mpu_config() {
 }
 
 fn test_heap() {
-        // testing heap
+    // testing heap
     // create a vector with capacity 1000
     let mut v = alloc::vec::Vec::with_capacity(1000);
 
@@ -288,6 +359,5 @@ fn test_heap() {
         for i in 0..1000 {
             info!("unsafe rust value: {}", *ptr.offset(i as isize));
         }
-
     }
 }
